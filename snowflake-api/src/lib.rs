@@ -101,6 +101,9 @@ pub enum SnowflakeApiError {
 
     #[error(transparent)]
     GlobError(#[from] glob::GlobError),
+
+    #[error(transparent)]
+    JsonDeserializationError(#[from] serde_json::Error),
 }
 
 const MAX_CHUNK_DOWNLOAD_WORKERS: usize = 10;
@@ -518,13 +521,46 @@ impl SnowflakeApi {
             Ok(RawQueryResult::Empty)
         } else if let Some(value) = resp.data.rowset {
             log::debug!("Got JSON response");
-            // NOTE: json response could be chunked too. however, go clients should receive arrow by-default,
-            // unless user sets session variable to return json. This case was added for debugging and status
-            // information being passed through that fields.
-            Ok(RawQueryResult::Json(JsonResult {
-                value,
-                schema: resp.data.rowtype.into_iter().map(Into::into).collect(),
-            }))
+
+            if !resp.data.chunks.is_empty() {
+                let mut combined_rows = match value {
+                    serde_json::Value::Array(initial_rows) => initial_rows,
+                    _ => return Err(SnowflakeApiError::UnexpectedResponse),
+                };
+
+                let chunk_results = try_join_all(resp.data.chunks.iter().map(|chunk| {
+                    self.connection
+                        .get_chunk(&chunk.url, &resp.data.chunk_headers)
+                }))
+                .await?;
+
+                for chunk_bytes in chunk_results {
+                    let chunk_str = String::from_utf8_lossy(&chunk_bytes);
+                    let chunk_str = chunk_str.trim();
+
+                    // Snowflake chunks are a raw sequence of JSON string arrays (i.e. [str1, str2], [str3, str4], ....)
+                    // Need to wrap in [] to make it a valid JSON array of arrays
+                    let json_str = format!("[{}]", chunk_str);
+                    let chunk_json: serde_json::Value = serde_json::from_str(&json_str)?;
+
+                    if let serde_json::Value::Array(chunk_rows) = chunk_json {
+                        combined_rows.extend(chunk_rows);
+                    } else {
+                        return Err(SnowflakeApiError::UnexpectedResponse);
+                    }
+                }
+
+                Ok(RawQueryResult::Json(JsonResult {
+                    value: serde_json::Value::Array(combined_rows),
+                    schema: resp.data.rowtype.into_iter().map(Into::into).collect(),
+                }))
+            } else {
+                // No chunks, just return the original JSON
+                Ok(RawQueryResult::Json(JsonResult {
+                    value,
+                    schema: resp.data.rowtype.into_iter().map(Into::into).collect(),
+                }))
+            }
         } else if resp.data.rowset_base64.is_some() {
             if enable_streaming {
                 return Ok(self.chunks_to_bytes_stream(&resp.data));
