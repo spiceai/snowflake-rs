@@ -661,6 +661,17 @@ impl SnowflakeApi {
 
         let stream = stream! {
 
+            if !base64.is_empty() {
+                match base64::engine::general_purpose::STANDARD.decode(&base64) {
+                    Ok(bytes) => {
+                        yield Ok(Bytes::from(bytes));
+                    }
+                    Err(e) => {
+                        yield Err(SnowflakeApiError::from(e));
+                    }
+                }
+            }
+
             let chunks_iter = chunk_urls.chunks(MAX_CHUNK_DOWNLOAD_WORKERS);
 
             for chunk in chunks_iter {
@@ -675,18 +686,6 @@ impl SnowflakeApi {
                 let results = future::join_all(futures_batch).await;
                 for result in results {
                     yield result;
-                }
-            }
-
-            if !base64.is_empty() {
-                log::debug!("Got base64 encoded response");
-                match base64::engine::general_purpose::STANDARD.decode(&base64) {
-                    Ok(bytes) => {
-                        yield Ok(Bytes::from(bytes));
-                    }
-                    Err(e) => {
-                        yield Err(SnowflakeApiError::from(e));
-                    }
                 }
             }
         };
