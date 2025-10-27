@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::num::NonZeroUsize;
 
 use bytes::{Buf, Bytes};
 use polars_core::frame::DataFrame;
@@ -32,13 +33,17 @@ impl RawQueryResult {
 }
 
 fn dataframe_from_json(json_result: &JsonResult) -> Result<DataFrame, PolarsCastError> {
+    let Some(infer_schema_len) = NonZeroUsize::new(5) else {
+        unreachable!("5 is non zero");
+    };
+
     let objects = arrays_to_objects(json_result)?;
     // fixme: serializing json again, is it possible to keep bytes? or implement casting?
     let json_string = serde_json::to_string(&objects)?;
     let reader = std::io::Cursor::new(json_string.as_bytes());
     let df = JsonReader::new(reader)
         .with_json_format(JsonFormat::Json)
-        .infer_schema_len(Some(5))
+        .infer_schema_len(Some(infer_schema_len))
         .finish()?;
     Ok(df)
 }
