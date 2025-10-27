@@ -19,7 +19,7 @@ default = ["cert-auth"]
 polars = ["dep:polars-core", "dep:polars-io"]
 
 [dependencies]
-arrow = "55"
+arrow = "56.0.0"
 async-trait = "0.1"
 async-stream = "0.3.5"
 base64 = "0.22"
@@ -55,7 +55,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
 anyhow = "1"
-arrow = { version = "55", features = ["prettyprint"] }
+arrow = { version = "56.0.0", features = ["prettyprint"] }
 clap = { version = "4", features = ["derive"] }
 pretty_env_logger = "0.5"
 tokio = { version = "1.35", features = ["macros", "rt-multi-thread"] }
