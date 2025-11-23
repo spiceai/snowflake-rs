@@ -20,9 +20,7 @@ use std::sync::Arc;
 
 use async_stream::stream;
 
-use arrow::error::ArrowError;
-use arrow::ipc::reader::StreamReader;
-use arrow::record_batch::RecordBatch;
+use arrow_ipc::reader::StreamReader;
 use base64::Engine;
 use bytes::{Buf, Bytes};
 use futures::future::try_join_all;
@@ -31,6 +29,9 @@ use reqwest_middleware::ClientWithMiddleware;
 use thiserror::Error;
 
 use responses::{ExecResponse, QueryExecResponseData};
+// Part of public interface
+pub use arrow_array::RecordBatch;
+pub use arrow_schema::ArrowError;
 use session::{AuthError, Session};
 
 use crate::connection::QueryType;
@@ -61,7 +62,7 @@ pub enum SnowflakeApiError {
     ResponseDeserializationError(#[from] base64::DecodeError),
 
     #[error(transparent)]
-    ArrowError(#[from] arrow::error::ArrowError),
+    ArrowError(#[from] ArrowError),
 
     #[error("S3 bucket path in PUT request is invalid: `{0}`")]
     InvalidBucketPath(String),
@@ -182,9 +183,9 @@ impl RawQueryResult {
                     .collect::<Vec<Result<RecordBatch, ArrowError>>>()
                     .await;
 
-                return Ok(QueryResult::Arrow(
+                Ok(QueryResult::Arrow(
                     arrow_records.into_iter().map(Result::unwrap).collect(),
-                ));
+                ))
             }
             RawQueryResult::Json(j) => Ok(QueryResult::Json(j)),
             RawQueryResult::Empty => Ok(QueryResult::Empty),
@@ -204,12 +205,11 @@ impl RawQueryResult {
         let batch_stream = bytes_stream.flat_map(|bytes_result| match bytes_result {
             Ok(bytes) => match Self::bytes_to_batches(bytes) {
                 Ok(batches) => futures::stream::iter(batches.into_iter().map(Ok)).boxed(),
-                Err(e) => futures::stream::once(async move { Err(ArrowError::from(e)) }).boxed(),
+                Err(e) => futures::stream::once(async move { Err(e) }).boxed(),
             },
             Err(e) => futures::stream::once(async move {
                 Err(ArrowError::ParseError(format!(
-                    "Unable to parse RecordBatch due to error in bytes stream: {}",
-                    e.to_string()
+                    "Unable to parse RecordBatch due to error in bytes stream: {e}"
                 )))
             })
             .boxed(),
@@ -458,11 +458,12 @@ impl SnowflakeApi {
         let resp = self
             .run_sql::<ExecResponse>(sql, QueryType::JsonQuery)
             .await?;
-        log::debug!("Got PUT response: {:?}", resp);
+        log::debug!("Got PUT response: {resp:?}");
 
         match resp {
-            ExecResponse::Query(_) => Err(SnowflakeApiError::UnexpectedResponse),
-            ExecResponse::QueryAsync(_) => Err(SnowflakeApiError::UnexpectedResponse),
+            ExecResponse::Query(_) | ExecResponse::QueryAsync(_) => {
+                Err(SnowflakeApiError::UnexpectedResponse)
+            }
             ExecResponse::PutGet(pg) => put::put(pg).await,
             ExecResponse::Error(e) => Err(SnowflakeApiError::ApiError(
                 e.data.error_code,
@@ -493,21 +494,22 @@ impl SnowflakeApi {
         let mut resp = self
             .run_sql::<ExecResponse>(sql, QueryType::ArrowQuery)
             .await?;
-        log::debug!("Got query response: {:?}", resp);
+        log::debug!("Got query response: {resp:?}");
 
         if let ExecResponse::QueryAsync(data) = &resp {
             log::debug!("Got async exec response");
             resp = self
                 .get_async_exec_result(&data.data.get_result_url)
                 .await?;
-            log::debug!("Got result for async exec: {:?}", resp);
+            log::debug!("Got result for async exec: {resp:?}");
         }
 
         let resp = match resp {
             // processable response
             ExecResponse::Query(qr) => Ok(qr),
-            ExecResponse::QueryAsync(_) => Err(SnowflakeApiError::UnexpectedResponse),
-            ExecResponse::PutGet(_) => Err(SnowflakeApiError::UnexpectedResponse),
+            ExecResponse::QueryAsync(_) | ExecResponse::PutGet(_) => {
+                Err(SnowflakeApiError::UnexpectedResponse)
+            }
             ExecResponse::Error(e) => Err(SnowflakeApiError::ApiError(
                 e.data.error_code,
                 e.message.unwrap_or_default(),
@@ -522,10 +524,15 @@ impl SnowflakeApi {
         } else if let Some(value) = resp.data.rowset {
             log::debug!("Got JSON response");
 
-            if !resp.data.chunks.is_empty() {
-                let mut combined_rows = match value {
-                    serde_json::Value::Array(initial_rows) => initial_rows,
-                    _ => return Err(SnowflakeApiError::UnexpectedResponse),
+            if resp.data.chunks.is_empty() {
+                // No chunks, just return the original JSON
+                Ok(RawQueryResult::Json(JsonResult {
+                    value,
+                    schema: resp.data.rowtype.into_iter().map(Into::into).collect(),
+                }))
+            } else {
+                let serde_json::Value::Array(mut combined_rows) = value else {
+                    return Err(SnowflakeApiError::UnexpectedResponse);
                 };
 
                 let chunk_results = try_join_all(resp.data.chunks.iter().map(|chunk| {
@@ -540,7 +547,7 @@ impl SnowflakeApi {
 
                     // Snowflake chunks are a raw sequence of JSON string arrays (i.e. [str1, str2], [str3, str4], ....)
                     // Need to wrap in [] to make it a valid JSON array of arrays
-                    let json_str = format!("[{}]", chunk_str);
+                    let json_str = format!("[{chunk_str}]");
                     let chunk_json: serde_json::Value = serde_json::from_str(&json_str)?;
 
                     if let serde_json::Value::Array(chunk_rows) = chunk_json {
@@ -552,12 +559,6 @@ impl SnowflakeApi {
 
                 Ok(RawQueryResult::Json(JsonResult {
                     value: serde_json::Value::Array(combined_rows),
-                    schema: resp.data.rowtype.into_iter().map(Into::into).collect(),
-                }))
-            } else {
-                // No chunks, just return the original JSON
-                Ok(RawQueryResult::Json(JsonResult {
-                    value,
                     schema: resp.data.rowtype.into_iter().map(Into::into).collect(),
                 }))
             }
@@ -593,7 +594,7 @@ impl SnowflakeApi {
         sql_text: &str,
         query_type: QueryType,
     ) -> Result<R, SnowflakeApiError> {
-        log::debug!("Executing: {}", sql_text);
+        log::debug!("Executing: {sql_text}");
 
         let parts = self.session.get_token().await?;
 
@@ -622,7 +623,7 @@ impl SnowflakeApi {
         &self,
         query_result_url: &String,
     ) -> Result<ExecResponse, SnowflakeApiError> {
-        log::debug!("Getting async exec result: {}", query_result_url);
+        log::debug!("Getting async exec result: {query_result_url}");
 
         let mut delay = 1; // Initial delay of 1 second
 

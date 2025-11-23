@@ -1,9 +1,10 @@
 use anyhow::Result;
 use arrow::util::pretty::pretty_format_batches;
 use opentelemetry::global;
+use opentelemetry::trace::TracerProvider;
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{runtime, trace as sdktrace, Resource};
+use opentelemetry_sdk::Resource;
 use reqwest_middleware::Extension;
 use reqwest_tracing::{OtelName, SpanBackendWithUrl};
 use tracing_subscriber::layer::SubscriberExt;
@@ -13,29 +14,26 @@ use snowflake_api::{AuthArgs, QueryResult, SnowflakeApiBuilder};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let tracer = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(
-            opentelemetry_otlp::new_exporter()
-                .tonic()
-                .with_endpoint("http://localhost:4317"),
-        )
-        .with_trace_config(
-            sdktrace::config().with_resource(Resource::new(vec![KeyValue::new(
-                opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-                "snowflake-rust-client-demo",
-            )])),
-        )
-        .install_batch(runtime::Tokio)?;
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint("http://localhost:4317")
+        .build()?;
+    let provider = opentelemetry_sdk::trace::TracerProvider::builder()
+        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+        .with_resource(Resource::new(vec![KeyValue::new(
+            opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+            "snowflake-rust-client-demo",
+        )]))
+        .build();
+    let tracer = provider.tracer("snowflake");
 
-    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer.clone());
+    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
     let subscriber = tracing_subscriber::Registry::default().with(telemetry);
     tracing::subscriber::set_global_default(subscriber)?;
 
     dotenv::dotenv().ok();
 
-    let mut client = Connection::default_client_builder()?;
-    client = client
+    let client = Connection::default_client_builder()?
         .with_init(Extension(OtelName(std::borrow::Cow::Borrowed(
             "snowflake-api",
         ))))
