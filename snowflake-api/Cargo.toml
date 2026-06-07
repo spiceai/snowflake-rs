@@ -19,9 +19,9 @@ default = ["cert-auth"]
 polars = ["dep:polars-core", "dep:polars-io"]
 
 [dependencies]
-arrow-array = "57"
-arrow-ipc = "57"
-arrow-schema = "57"
+arrow-array = "58"
+arrow-ipc = "58"
+arrow-schema = "58"
 async-trait = "0.1"
 async-stream = "0.3.5"
 base64 = "0.22"
@@ -52,12 +52,12 @@ polars-io = { version = ">=0.41", features = [
 
 # put request support
 glob = { version = "0.3" }
-object_store = { version = "0.12", features = ["aws"] }
+object_store = { version = "0.13", features = ["aws"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
 anyhow = "1"
-arrow = { version = "57", features = ["prettyprint"] }
+arrow = { version = "58", features = ["prettyprint"] }
 clap = { version = "4", features = ["derive"] }
 pretty_env_logger = "0.5"
 tokio = { version = "1.35", features = ["macros", "rt-multi-thread"] }
