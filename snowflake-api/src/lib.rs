@@ -632,7 +632,7 @@ impl SnowflakeApi {
             let resp = self
                 .connection
                 .request::<ExecResponse>(
-                    QueryType::ArrowQueryResult(query_result_url.to_string()),
+                    QueryType::ArrowQueryResult(query_result_url.clone()),
                     &self.account_identifier,
                     &[],
                     Some(&parts.session_token_auth_header),
