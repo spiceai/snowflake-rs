@@ -71,7 +71,7 @@ impl QueryType {
                 method: reqwest::Method::POST,
             },
             Self::ArrowQueryResult(query_result_url) => QueryContext {
-                path: query_result_url.to_string(),
+                path: query_result_url.clone(),
                 accept_mime: "application/snowflake",
                 method: reqwest::Method::GET,
             },
