@@ -124,3 +124,36 @@ pub fn generate_jwt_token(
     let res = encode(&Header::new(Algorithm::RS256), &claims, &ek)?;
     Ok(res)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonwebtoken::{decode, DecodingKey, Validation};
+    use rand::rngs::OsRng;
+    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
+
+    #[test]
+    fn generated_token_round_trips_with_jsonwebtoken_v10() {
+        let private_key = rsa::RsaPrivateKey::new(&mut OsRng, 2048).expect("test key generates");
+        let private_key_pem = private_key
+            .to_pkcs8_pem(LineEnding::LF)
+            .expect("private key encodes");
+        let public_key_pem = private_key
+            .to_public_key()
+            .to_public_key_pem(LineEnding::LF)
+            .expect("public key encodes");
+        let identifier = "TEST_ACCOUNT.TEST_USER";
+
+        let token = generate_jwt_token(private_key_pem.as_str(), identifier)
+            .expect("Snowflake JWT generates");
+        let decoded = decode::<Claims>(
+            &token,
+            &DecodingKey::from_rsa_pem(public_key_pem.as_bytes()).expect("public key decodes"),
+            &Validation::new(Algorithm::RS256),
+        )
+        .expect("generated JWT verifies");
+
+        assert_eq!(decoded.claims.sub, identifier);
+        assert!(decoded.claims.iss.starts_with(identifier));
+    }
+}
