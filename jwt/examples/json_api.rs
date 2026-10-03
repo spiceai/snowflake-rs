@@ -43,16 +43,16 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     let pem = fs::read_to_string(&args.private_key)?;
-    let full_identifier = format!("{}.{}", &args.account_identifier, &args.username);
+    let full_identifier = format!("{}.{}", args.account_identifier, args.username);
     let jwt = snowflake_jwt::generate_jwt_token(&pem, &full_identifier)?;
 
-    println!("{}", &args.sql);
+    println!("{}", args.sql);
 
     let url = format!(
         "https://{}.snowflakecomputing.com/api/v2/statements",
-        &args.account_identifier
+        args.account_identifier
     );
-    let auth = format!("Bearer {}", &jwt);
+    let auth = format!("Bearer {}", jwt);
     let resp = ureq::post(&url)
         .set("X-Snowflake-Authorization-Token-Type", "KEYPAIR_JWT")
         .set("Authorization", &auth)

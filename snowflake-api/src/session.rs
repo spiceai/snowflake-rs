@@ -98,7 +98,7 @@ impl AuthToken {
     }
 
     pub fn auth_header(&self) -> String {
-        format!("Snowflake Token=\"{}\"", &self.token)
+        format!("Snowflake Token=\"{}\"", self.token)
     }
 }
 
@@ -278,7 +278,7 @@ impl Session {
 
     #[cfg(feature = "cert-auth")]
     fn cert_request_body(&self) -> Result<CertLoginRequest, AuthError> {
-        let full_identifier = format!("{}.{}", &self.account_identifier, &self.username);
+        let full_identifier = format!("{}.{}", self.account_identifier, self.username);
         let private_key_pem = self
             .private_key_pem
             .as_ref()

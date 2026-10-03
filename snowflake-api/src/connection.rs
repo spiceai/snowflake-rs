@@ -157,7 +157,7 @@ impl Connection {
 
         let url = format!(
             "https://{}.snowflakecomputing.com/{}",
-            &account_identifier, context.path
+            account_identifier, context.path
         );
         let url = Url::parse_with_params(&url, get_params)?;
 
